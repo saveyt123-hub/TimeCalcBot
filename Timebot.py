@@ -1,15 +1,15 @@
 import asyncio
 import logging
-import os  # 👈 Добавили этот импорт
+import os
 import re
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
+from aiohttp import web
 
-# 👇 Безопасное получение токена из переменной окружения
+# Получаем токен из переменной окружения
 API_TOKEN = os.getenv('BOT_TOKEN')
 
-# Проверка: если токен не найден — выводим ошибку
 if not API_TOKEN:
     raise ValueError("❌ BOT_TOKEN не найден! Добавь переменную окружения в настройках Render")
 
@@ -167,9 +167,63 @@ async def cmd_start(message: types.Message):
     )
 
 
+# ===== HTTP СЕРВЕР ДЛЯ RENDER =====
+async def handle_health(request):
+    """Обработчик для проверки здоровья бота"""
+    return web.json_response({
+        "status": "ok",
+        "bot": "running",
+        "message": "Time Calculator Bot is alive!"
+    })
+
+
+async def handle_root(request):
+    """Главная страница"""
+    return web.Response(
+        text="<h1>⏰ Time Calculator Bot</h1><p>Bot is running successfully!</p>",
+        content_type="text/html"
+    )
+
+
+async def start_http_server():
+    """Запускаем HTTP сервер на порту 8080"""
+    app = web.Application()
+    app.router.add_get('/', handle_root)
+    app.router.add_get('/health', handle_health)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+
+    # Bind to port 8080 (Render требует этот порт)
+    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    await site.start()
+
+    logging.info("✅ HTTP server started on port 8080")
+    logging.info("🔍 Health check available at: /health")
+
+    return runner
+
+
 async def main():
-    await dp.start_polling(bot)
+    """Основная функция запуска"""
+    logging.info("🚀 Starting Time Calculator Bot...")
+
+    # 1. Запускаем HTTP сервер (чтобы Render был доволен)
+    http_runner = await start_http_server()
+
+    try:
+        # 2. Запускаем бота (polling)
+        logging.info("🤖 Starting bot polling...")
+        await dp.start_polling(bot)
+    finally:
+        # 3. Очистка при остановке
+        await http_runner.cleanup()
+        await bot.session.close()
+        logging.info("👋 Bot stopped")
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info("⌨️ Stopped by user")
